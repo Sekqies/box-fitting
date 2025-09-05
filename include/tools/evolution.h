@@ -1,221 +1,281 @@
+#include <iostream>
+#include <vector>
 #include <tools/customRand.h>
 #include <tools/MathArray.h>
 #include <tools/Square.h>
-#include <algorithm>
-#include <random>
-#include <iostream>
 
-using namespace std;
 typedef float number;
+// --- GA Configuration ---
+constexpr int GENE_SIZE = 17; // N: Number of suares to pack
+constexpr number SQUARE_SIDE_LENGTH = 1.0; // Side length of small squares
+constexpr number BOX_SIDE_LENGTH = 4.8;   // L: Side length of the container
 
-const size_t POPULATION_SIZE = 50;
-const size_t GENE_SIZE = 17;
-const size_t INTERSECTION_PENALTY = 100;
-const size_t EMPTY_PENALTY = 5;
-const size_t ELITE_COUNT = 3;     
-const size_t RANDOM_COUNT = 10;
+constexpr int POPULATION_SIZE = 150;
+constexpr double ELITISM_RATE = 0.1; // 10% of the best individuals are carried over
+constexpr double MUTATION_RATE = 0.05; // 5% chance per square to mutate
+constexpr double IMMIGRATION_RATE = 0.05; // 5% of new individuals are random
+constexpr int TOURNAMENT_SIZE = 5; 
 
-const number MUTATION_RATE = 0.5;
-const number MUTATION_STRENGTH = 0.2;
+constexpr double ROTATIONAL_SNAP_PROBABILITY = 0.5; // Chance to rotate and move a square that's near an edge
+constexpr number BOUNDARY_THRESHOLD = 1.5 * SQUARE_SIDE_LENGTH; // How close to an edge to be affected
+constexpr double BOUNDARY_PENALTY_WEIGHT = 0.5; // How much to penalize non-alignment
 
-bool isSquareValid(const Square& s, number L) {
-    auto vertices = s.getVertices(); 
-    for (const auto& v : vertices) {
-        if (v.x < 0 || v.x > L || v.y < 0 || v.y > L) {
-            return false; 
+// Percentage of non-elites to be culled each generation
+constexpr double PREDATION_RATE = 0.1; 
+// Probability of a disaster event in any given generation
+constexpr double DISASTER_PROBABILITY = 0.02; 
+// The higher mutation rate used during a disaster
+constexpr double DISASTER_HYPERMUTATION_RATE = 0.50; 
+extern std::mt19937 gen;
+
+
+class Gene {
+public:
+    MathArray<Square, GENE_SIZE> data;
+    double fitness;
+
+    Gene() : fitness(std::numeric_limits<double>::max()) {
+        for (size_t i = 0; i < GENE_SIZE; ++i) {
+            data[i] = Square(
+                Point(random_real(0, BOX_SIDE_LENGTH), random_real(0, BOX_SIDE_LENGTH)),
+                random_real(0, 2 * PI),
+                SQUARE_SIDE_LENGTH
+            );
         }
     }
-    return true; 
+
+void calculateFitness() {
+    double overlap_penalty = 0.0;
+    double bounds_penalty = 0.0;
+    double positional_adherence_penalty = 0.0;
+
+    const Square container_box(Point(BOX_SIDE_LENGTH / 2.0, BOX_SIDE_LENGTH / 2.0), 0, BOX_SIDE_LENGTH);
+    const Point box_center(BOX_SIDE_LENGTH / 2.0, BOX_SIDE_LENGTH / 2.0);
+
+    const double max_dist = sqrt(pow(box_center.x, 2) + pow(box_center.y, 2));
+
+    for (size_t i = 0; i < GENE_SIZE; ++i) {
+        for (size_t j = i + 1; j < GENE_SIZE; ++j) {
+            overlap_penalty += areaOfSquareIntersections(data[i], data[j]);
+        }
+        number intersection_with_box = areaOfSquareIntersections(data[i], container_box);
+        number square_area = data[i].l * data[i].l;
+        bounds_penalty += (square_area - intersection_with_box);
+    }
+    
+    for (size_t i = 0; i < GENE_SIZE; ++i) {
+        const auto& sq = data[i];
+
+        // 1. Calculate the square's distance from the center of the box
+        double dist_from_center = sqrt(pow(sq.c.x - box_center.x, 2) + pow(sq.c.y - box_center.y, 2));
+
+        // 2. Normalize the distance to a multiplier between 0 and 1
+        double positional_multiplier = dist_from_center / max_dist;
+
+        // 3. Calculate the rotation penalty and scale it by the multiplier
+        double rotation_penalty = abs(sin(2 * sq.t));
+        positional_adherence_penalty += rotation_penalty * positional_multiplier;
+    }
+
+    // Add the weighted new penalty to the total fitness
+    fitness = overlap_penalty * 10 + bounds_penalty + (positional_adherence_penalty * BOUNDARY_PENALTY_WEIGHT);
 }
 
-class Gene{
-    public:
-        MathArray<Square,GENE_SIZE> data;
-        number L = 4.75;
-        void initialize(){
-            static_assert(GENE_SIZE >= 4, "GENE_SIZE must be 4 or greater for this optimization.");
-            const number half_len = 0.5;
-            data[0] = Square(Point(half_len, half_len), 0.0, 1.0);         
-            data[1] = Square(Point(L - half_len, half_len), 0.0, 1.0);     
-            data[2] = Square(Point(half_len, L - half_len), 0.0, 1.0);    
-            data[3] = Square(Point(L - half_len, L - half_len), 0.0, 1.0); 
-            for(size_t i=4;i<GENE_SIZE;i++){
-                const number square_len = 0.5;
-                number x = random_real(square_len,L-square_len);
-                number y = random_real(square_len,L-square_len);
-                number closest_dist = min({x,L-x,y,L-y});
-                const number sqrt_2 = sqrt(2.0);
-                number theta;
-
-                if (closest_dist >= 1.0 / sqrt_2) {
-                    theta = random_real(0, PI / 2.0);
-                }
-                else {
-                    number theta_bound = acos(sqrt_2 * closest_dist);
-                    number range1_end = PI / 4.0 - theta_bound;   
-                    number range2_start = PI / 4.0 + theta_bound; 
-
-                    if (random_integer(0, 1) == 0) {
-                        theta = random_real(0, range1_end);
+    void mutate() {
+    for (size_t i = 0; i < GENE_SIZE; ++i) {
+        if (random_real(0, 1) < MUTATION_RATE) {
+            int mutation_type = random_integer(0, 2);
+            switch(mutation_type) {
+                case 0: // Nudge position
+                    data[i].c.x += random_real(-0.1 * BOX_SIDE_LENGTH, 0.1 * BOX_SIDE_LENGTH);
+                    data[i].c.y += random_real(-0.1 * BOX_SIDE_LENGTH, 0.1 * BOX_SIDE_LENGTH);
+                    break;
+                case 1: // Jump to a new position
+                    data[i].c.x = random_real(0, BOX_SIDE_LENGTH);
+                    data[i].c.y = random_real(0, BOX_SIDE_LENGTH);
+                    break;
+                case 2: // Change rotation 
+                    if (random_real(0, 1) < ROTATIONAL_SNAP_PROBABILITY) {
+                        // Snap to the nearest 90-degree angle
+                        data[i].t = round(data[i].t / (PI / 2.0)) * (PI / 2.0);
                     } else {
-                        theta = random_real(range2_start, PI / 2.0);
+                        // Regular random rotation
+                        data[i].t = random_real(0, 2 * PI);
                     }
-                }      
-                data[i] = Square(Point(x,y),theta,1);
+                    break;
             }
+            // Clamp coordinates to stay within the box 
+            data[i].c.x = std::max((number)0.0, std::min(BOX_SIDE_LENGTH, data[i].c.x));
+            data[i].c.y = std::max((number)0.0, std::min(BOX_SIDE_LENGTH, data[i].c.y));
         }
-        number fitness(){
-            number intersectionArea = 0.0;
-            for(size_t i=0;i<GENE_SIZE;++i){
-                for(size_t j=i+1;j<GENE_SIZE;++j){
-                    intersectionArea += areaOfSquareIntersections(data[i],data[j]);
-                }
-            }
-            number min_x = L, max_x = 0.0, min_y = L, max_y = 0.0;
-            for (const auto& square : data) {
-                auto vertices = square.getVertices();
-                for (const auto& v : vertices) {
-                    min_x = min(min_x, v.x);
-                    max_x = max(max_x, v.x);
-                    min_y = min(min_y, v.y);
-                    max_y = max(max_y, v.y);
-                }
-            }
-            number boundingBoxArea = (max_x - min_x) * (max_y - min_y);
-            return -boundingBoxArea * EMPTY_PENALTY - intersectionArea * INTERSECTION_PENALTY;  
-        }
-        void mutate() {
-            normal_distribution<> d(0, MUTATION_STRENGTH);
-            for (size_t i=4; i<GENE_SIZE; ++i) {
-                Square& square = data[i]; 
-                if (random_real(0, 1) < MUTATION_RATE) {
-                    Square potential_square = square; 
-                    potential_square.c.x += d(gen);   
-
-                    if (isSquareValid(potential_square, L)) {
-                        square = potential_square;
-                    }
-                }
-
-                if (random_real(0, 1) < MUTATION_RATE) {
-                    Square potential_square = square;
-                    potential_square.c.y += d(gen);   
-
-                    if (isSquareValid(potential_square, L)) {
-                        square = potential_square;
-                    }
-                }
-
-                if (random_real(0, 1) < MUTATION_RATE) {
-                    Square potential_square = square;
-                    potential_square.t += d(gen);
-                    potential_square.t = fmod(potential_square.t, PI / 2.0);
-                    if (potential_square.t < 0) {
-                        potential_square.t += PI / 2.0;
-                    }
-
-                    if (isSquareValid(potential_square, L)) {
-                        square = potential_square;
-                    }
-                }
-            }
-        }
-        Gene cross(const Gene& partner) const {
-            Gene child;
-            child.L = this->L;
-
-            for (size_t i = 0; i < 4; ++i) {
-                child.data[i] = this->data[i];
-            }
-
-            for (size_t i = 4; i < GENE_SIZE; ++i) {
-                if (random_real(0, 1) < 0.05) {
-                    const Square& s1 = this->data[i];
-                    const Square& s2 = partner.data[i];
-
-                    Point avg_center((s1.c.x + s2.c.x) / 2.0, (s1.c.y + s2.c.y) / 2.0);
-                    number avg_theta = (s1.t + s2.t) / 2.0;
-
-                    Square potential_child_square(avg_center, avg_theta, 1.0);
-
-                    if (isSquareValid(potential_child_square, this->L)) {
-                        child.data[i] = potential_child_square;
-                    } else {
-                        child.data[i] = (random_real(0, 1) < 0.5) ? s1 : s2;
-                    }
-                } else {
-                    if (random_real(0, 1) < 0.5) {
-                        child.data[i] = this->data[i];
-                    } else {
-                        child.data[i] = partner.data[i];
-                    }
-                }
-            }
-            return child;
-        }
+    }
+}
 };
 
-bool orderByFitness(Gene& a, Gene& b){
-    return a.fitness() > b.fitness();
+// --- Genetic Algorithm Functions ---
+
+vector<Gene> population;
+
+// Crossover 
+Gene cross(const Gene& parent1, const Gene& parent2) {
+    Gene child;
+    for (size_t i = 0; i < GENE_SIZE; ++i) {
+        child.data[i] = (random_real(0, 1) < 0.5) ? parent1.data[i] : parent2.data[i];
+    }
+    return child;
 }
 
-Gene tournament_selection(MathArray<Gene, POPULATION_SIZE>& population) {
-    const size_t TOURNAMENT_SIZE = 3;
-    size_t best_index = random_integer(0, POPULATION_SIZE - 1);
-
-    for (size_t i = 1; i < TOURNAMENT_SIZE; ++i) {
-        size_t contestant_index = random_integer(0, POPULATION_SIZE - 1);
-        if (orderByFitness(population[contestant_index], population[best_index])) {
-            best_index = contestant_index;
+// Tournament selection
+const Gene& tournament_selection() {
+    int best_index = -1;
+    double best_fitness = std::numeric_limits<double>::max();
+    
+    for (int i = 0; i < TOURNAMENT_SIZE; ++i) {
+        int random_index = random_integer(0, POPULATION_SIZE - 1);
+        if (population[random_index].fitness < best_fitness) {
+            best_fitness = population[random_index].fitness;
+            best_index = random_index;
         }
     }
     return population[best_index];
 }
-MathArray<Gene, POPULATION_SIZE> population;
-Gene best;
 
-void initializePopulation(){
-    for (size_t i = 0; i < POPULATION_SIZE; ++i) {
-        population[i].initialize();
+// Some scenarios have obvious solutions (e.g: packing 4 squares in a 2x2 grid). When it is possible to just make a grid, we do!
+Gene createGridGene() {
+    Gene gridGene;
+    // This can be modified to int grid_dim = floor(sqrt(GENE_SIZE)); if we always want to make the closest grid possible
+    // (This solution usually completely butchers any genetic variety)
+    int grid_dim = ceil(sqrt(GENE_SIZE)); 
+    if(grid_dim * grid_dim > BOX_SIDE_LENGTH * BOX_SIDE_LENGTH){
+        return Gene();
     }
-}
+    const number spacing = SQUARE_SIDE_LENGTH;
 
-MathArray<Gene,POPULATION_SIZE> evolve_once(size_t generation_number = 0){
-    sort(population.begin(), population.end(), orderByFitness);
+    number grid_total_size = grid_dim * spacing;
 
-    if (orderByFitness(population[0], best)) {
-        best = population[0];
-    }
-
-    MathArray<Gene, POPULATION_SIZE> new_population;
-    const size_t ELITE_COUNT = 2; 
-
-    for (size_t i = 0; i < ELITE_COUNT; ++i) {
-        new_population[i] = population[i];
-    }
-
-    for (size_t i = ELITE_COUNT; i < POPULATION_SIZE; ++i) {
-        Gene parent1 = tournament_selection(population);
-        Gene parent2 = tournament_selection(population);
-        Gene child = parent1.cross(parent2);
-        child.mutate(); 
-        new_population[i] = child;
-    }
-    population = new_population;
-    cout << "L=" << population[0].L << '\n' << "fitness = " << population[0].fitness() << '\n';
-    for(const Square& sq : population[0].data){
-        printf("(%f, %f, %f, 1.0)\n",sq.c.x, sq.c.y, sq.t);
-    }
-    return population;
-}
-Gene evolve(const size_t number_of_generations){
+    // Calculate the starting offset to center the grid within the box.
+    // If the grid is somehow larger than the box, we start at 0.
+    number start_offset = std::max((double)0.0, (BOX_SIDE_LENGTH - grid_total_size) / 2.0);
     
-    for (size_t i = 0; i < POPULATION_SIZE; ++i) {
-        population[i].initialize();
+    number center_offset = spacing / 2.0;
+
+    int square_index = 0;
+    for (int i = 0; i < grid_dim && square_index < GENE_SIZE; ++i) {
+        for (int j = 0; j < grid_dim && square_index < GENE_SIZE; ++j) {
+            
+            number pos_x = start_offset + (j * spacing) + center_offset;
+            number pos_y = start_offset + (i * spacing) + center_offset;
+
+            gridGene.data[square_index].c = Point(pos_x, pos_y);
+            gridGene.data[square_index].t = 0.0;
+            square_index++;
+        }
     }
-    for(int i=0;i<100;i++){
-        evolve_once();
+    return gridGene;
+}
+
+void initializeGenes() {
+    population.clear();
+
+    population.push_back(createGridGene());
+
+    for (int i = 1; i < POPULATION_SIZE; ++i) {
+        population.push_back(Gene());
+    }
+}
+
+Gene evolve_once() {
+    for (auto& gene : population) {
+        gene.calculateFitness();
     }
 
-    return best; 
+    sort(population.begin(), population.end(), [](const Gene& a, const Gene& b) {
+        return a.fitness < b.fitness;
+    });
+
+    vector<Gene> survivors;
+    survivors.reserve(POPULATION_SIZE);
+
+    // Elitism
+    int elite_count = static_cast<int>(POPULATION_SIZE * ELITISM_RATE);
+    for (int i = 0; i < elite_count; ++i) {
+        survivors.push_back(population[i]);
+    }
+
+    // Random Predation
+    vector<int> non_elite_indices;
+    for (int i = elite_count; i < POPULATION_SIZE; ++i) {
+        non_elite_indices.push_back(i);
+    }
+    shuffle(non_elite_indices.begin(), non_elite_indices.end(), gen);
+
+    int predation_kill_count = static_cast<int>(non_elite_indices.size() * PREDATION_RATE);
+    int non_elite_survivor_count = non_elite_indices.size() - predation_kill_count;
+    
+    for (int i = 0; i < non_elite_survivor_count; ++i) {
+        survivors.push_back(population[non_elite_indices[i]]);
+    }
+
+    // Disaster
+    double current_mutation_rate = MUTATION_RATE;
+    if (random_real(0, 1) < DISASTER_PROBABILITY) {
+        current_mutation_rate = DISASTER_HYPERMUTATION_RATE;
+    }
+
+    vector<Gene> new_population = survivors; 
+    int offspring_needed = POPULATION_SIZE - survivors.size();
+
+    // Custom tournament selection that works on the survivors list
+    auto tournament_selection_on_survivors = [&]() -> const Gene& {
+        int best_index = -1;
+        double best_fitness = std::numeric_limits<double>::max();
+        for (int i = 0; i < TOURNAMENT_SIZE; ++i) {
+            int random_index = random_integer(0, survivors.size() - 1);
+            if (survivors[random_index].fitness < best_fitness) {
+                best_fitness = survivors[random_index].fitness;
+                best_index = random_index;
+            }
+        }
+        return survivors[best_index];
+    };
+
+    for (int i = 0; i < offspring_needed; ++i) {
+        const Gene& parent1 = tournament_selection_on_survivors();
+        const Gene& parent2 = tournament_selection_on_survivors();
+        Gene child = cross(parent1, parent2);
+        
+
+        auto mutate_child = [&](Gene& gene, double rate) {
+            for (size_t j = 0; j < GENE_SIZE; ++j) {
+                if (random_real(0, 1) < rate) {
+                    int mutation_type = random_integer(0, 2);
+                    if (mutation_type == 0) {
+                        gene.data[j].c.x += random_real(-0.1, 0.1);
+                        gene.data[j].c.y += random_real(-0.1, 0.1);
+                    } else if (mutation_type == 1) {
+                        gene.data[j].c.x = random_real(0, BOX_SIDE_LENGTH);
+                        gene.data[j].c.y = random_real(0, BOX_SIDE_LENGTH);
+                    } else {
+                        gene.data[j].t = random_real(0, 2 * PI);
+                    }
+                }
+            }
+        };
+        mutate_child(child, current_mutation_rate);
+
+        new_population.push_back(child);
+    }
+    
+    population = new_population;
+
+    // Return the best individual in the current population
+    // The first one is not necessarily the best after breeding, so we re-calculate.
+    for (auto& gene : population) {
+        gene.calculateFitness();
+    }
+    sort(population.begin(), population.end(), [](const Gene& a, const Gene& b) {
+        return a.fitness < b.fitness;
+    });
+    
+    return population[0];
 }

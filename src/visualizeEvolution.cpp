@@ -21,13 +21,27 @@ const float PADDING = 50.0f;
 MathArray<Square,GENE_SIZE> shared_squares;
 std::mutex data_mutex; 
 std::atomic<bool> is_running = true; 
+std::atomic<bool> is_rendering_enabled = true;
+
 void evolution_worker() {
-    initializePopulation();
+    initializeGenes();
     while (is_running) {
-        MathArray<Gene,POPULATION_SIZE> population_info = evolve_once();
-        MathArray<Square,GENE_SIZE> best_squares = population_info[0].data;
+        Gene best_squares = evolve_once();
         std::lock_guard<std::mutex> guard(data_mutex);
-        shared_squares = best_squares;
+        shared_squares = best_squares.data;
+    }
+}
+
+void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods) {
+    // We only want to toggle on the initial press of the key
+    if (key == GLFW_KEY_R && action == GLFW_PRESS) {
+        // Toggle the rendering state
+        is_rendering_enabled = !is_rendering_enabled;
+        if (is_rendering_enabled) {
+            std::cout << "Rendering ON" << std::endl;
+        } else {
+            std::cout << "Rendering OFF" << std::endl;
+        }
     }
 }
 
@@ -64,6 +78,9 @@ int main() {
 
     // Create a window
     GLFWwindow* window = glfwCreateWindow(SCREEN_SIZE, SCREEN_SIZE, "epico", NULL, NULL);
+    // Inside main(), after glfwCreateWindow(...)
+    glfwMakeContextCurrent(window);
+    glfwSetKeyCallback(window, key_callback); // Register our new callback
     if (window == NULL) {
         std::cout << "Failed to create GLFW window" << std::endl;
         glfwTerminate();
@@ -99,7 +116,7 @@ int main() {
     glEnableVertexAttribArray(0);
 
     // Main render loop
-    initializePopulation();
+    initializeGenes();
     /*MathArray<Gene,POPULATION_SIZE> population_info = evolve_once();
     MathArray<Square,GENE_SIZE> squares = population_info[0].data;
     float L = population_info[0].L;
@@ -110,58 +127,52 @@ int main() {
     size_t frame_count = 0;
     size_t i =0;
     std::thread worker(evolution_worker);
+// Inside main()
     while (!glfwWindowShouldClose(window)) {
-
-        float time = glfwGetTime();
-        int time_location = glGetUniformLocation(shader.ID,"time");
-        // Rendering
-        glClearColor(0.2f,0.3f,0.3f,1.0f);
-        glClear(GL_COLOR_BUFFER_BIT);
-        shader.use();
-
-        glm::mat4 projection = glm::ortho(0.0f, SCREEN_SIZE, 0.0f, SCREEN_SIZE, -1.0f, 1.0f);
-        glm::mat4 view = glm::mat4(1.0f); 
-
-        shader.setMat4("projection", projection);
-        shader.setMat4("view", view);
-
-        glm::mat4 model = glm::mat4(1.0f);
-        // Move it to position (200, 300)
-        //model1 = glm::translate(model1, glm::vec3(200.0f, 300.0f, 0.0f));
-        MathArray<Square,GENE_SIZE> squares_to_draw;
-        {
-            std::lock_guard<std::mutex> guard(data_mutex);
-            squares_to_draw = shared_squares;
-        } 
-
-        if (!squares_to_draw.empty()) { 
-            float L = 4.75f; 
-            const float MAGNIFICATION = SCREEN_SIZE / L;
-            for(const Square& sq : squares_to_draw){
-                glm::mat4 model = glm::mat4(1.0f);
-                std::vector<Point> vertices = sq.getVertices();
-                //model = glm::translate(model, glm::vec3(MAGNIFICATION,MAGNIFICATION, 0.0f));
-                model = glm::scale(model,glm::vec3(MAGNIFICATION, MAGNIFICATION, 1.0f));
-                drawPolygon(shader, VAO, VBO, vertices, model);
-            }
-        }
-        /*for(const Square& sq : population_info[i].data){
-            model = glm::mat4(1.0f);
-            std::vector<Point> vertices = sq.getVertices();
-            model = glm::scale(model,glm::vec3(MAGNIFICATION,MAGNIFICATION,5.0f));
-            drawPolygon(shader, VAO, VBO, vertices, model);
-        }*/
-        
-        glUniform1f(time_location,time);
-        glBindVertexArray(VAO);
-        //glDrawArrays(GL_TRIANGLES, 0, 3);
-        
-        //glClearColor(0.2f, 0.5f, 0.3f, 1.0f); // Green background
-        //glClear(GL_COLOR_BUFFER_BIT);
-
-        // Swap buffers and poll for events
-        glfwSwapBuffers(window);
+        // Poll for events first to ensure keyboard input is responsive
         glfwPollEvents();
+
+        // Only execute rendering code if the flag is true
+        if (is_rendering_enabled) {
+            // --- All your existing rendering code goes here ---
+            float time = glfwGetTime();
+            int time_location = glGetUniformLocation(shader.ID,"time");
+
+            glClearColor(0.2f,0.3f,0.3f,1.0f);
+            glClear(GL_COLOR_BUFFER_BIT);
+            shader.use();
+
+            glm::mat4 projection = glm::ortho(0.0f, SCREEN_SIZE, 0.0f, SCREEN_SIZE, -1.0f, 1.0f);
+            shader.setMat4("projection", projection);
+            glm::mat4 mat(1.0f);
+            shader.setMat4("view", mat);
+
+            MathArray<Square,GENE_SIZE> squares_to_draw;
+            {
+                std::lock_guard<std::mutex> guard(data_mutex);
+                squares_to_draw = shared_squares;
+            } 
+
+            if (!squares_to_draw.empty()) { 
+                float L = BOX_SIDE_LENGTH; 
+                const float MAGNIFICATION = (SCREEN_SIZE - PADDING * 2) / L; // Adjusted for padding
+                for(const Square& sq : squares_to_draw){
+                    glm::mat4 model = glm::mat4(1.0f);
+                    std::vector<Point> vertices = sq.getVertices();
+                    
+                    // Adjust model to account for padding
+                    model = glm::translate(model, glm::vec3(PADDING, PADDING, 0.0f)); 
+                    model = glm::scale(model,glm::vec3(MAGNIFICATION, MAGNIFICATION, 1.0f));
+                    drawPolygon(shader, VAO, VBO, vertices, model);
+                }
+            }
+            
+            glUniform1f(time_location,time);
+            glBindVertexArray(VAO);
+            
+            // Swap buffers
+            glfwSwapBuffers(window);
+        }
     }
 
     // Clean up

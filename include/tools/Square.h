@@ -163,9 +163,9 @@ bool squareContainedIn(const Square& inner, const Square& outer) {
 }
 number areaOfSquareIntersections(const Square& sq1, const Square& sq2){
     if(sq1.l > sq2.l){
-        if(squareContainedIn(sq2,sq1)) return sq2.l;
+        if(squareContainedIn(sq2,sq1)) return sq2.l*sq2.l;
     }
-    else if(squareContainedIn(sq1,sq2)) return sq1.l;
+    else if(squareContainedIn(sq1,sq2)) return sq1.l*sq1.l;
     vector<Point> vertices = getSquareIntersections(sq1,sq2);
     return areaOfPolygon(vertices);
 }
