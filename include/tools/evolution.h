@@ -182,17 +182,16 @@ void initializeGenes() {
     for (int i = 1; i < POPULATION_SIZE; ++i) {
         population.push_back(Gene());
     }
-}
-
-Gene evolve_once() {
     for (auto& gene : population) {
         gene.calculateFitness();
     }
-
     sort(population.begin(), population.end(), [](const Gene& a, const Gene& b) {
         return a.fitness < b.fitness;
     });
+}
 
+
+Gene evolve_once() {
     vector<Gene> survivors;
     survivors.reserve(POPULATION_SIZE);
 
@@ -270,12 +269,13 @@ Gene evolve_once() {
 
     // Return the best individual in the current population
     // The first one is not necessarily the best after breeding, so we re-calculate.
+    // This also leaves the list sorted for future populations
     for (auto& gene : population) {
         gene.calculateFitness();
     }
     sort(population.begin(), population.end(), [](const Gene& a, const Gene& b) {
-        return a.fitness < b.fitness;
+            return a.fitness < b.fitness;
     });
-    
+
     return population[0];
 }
