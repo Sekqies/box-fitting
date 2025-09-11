@@ -26,7 +26,7 @@ constexpr double PREDATION_RATE = 0.1;
 constexpr double DISASTER_PROBABILITY = 0.02; 
 // The higher mutation rate used during a disaster
 constexpr double DISASTER_HYPERMUTATION_RATE = 0.50; 
-extern std::mt19937 gen;
+extern thread_local xso::rng gen;
 
 
 class Gene {

@@ -15,7 +15,8 @@
                 "-L${workspaceFolder}/lib",     
                 "-lglfw3",                    
                 "-lopengl32",                  
-                "-lgdi32"                       
+                "-lgdi32",
+                "-std=c++20"                       
             ],
             "group": {
                 "kind": "build",
