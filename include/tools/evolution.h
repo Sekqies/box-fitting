@@ -1,34 +1,52 @@
+#ifndef EVOLUTION_H
+#define EVOLUTION_H
+
 #include <iostream>
 #include <vector>
 #include <tools/customRand.h>
 #include <tools/MathArray.h>
 #include <tools/Square.h>
 #include <utility>
+#include <algorithm>
+#include <limits>
+#include <cmath>
+#include <thread>
+#include <mutex>
+#include <stdexcept>
+#include <random> 
+
+using std::vector;
+using std::sort;
+using std::shuffle;
+using std::max;
+using std::min;
+using std::round;
 
 typedef float number;
+
 // --- GA Configuration ---
-constexpr int GENE_SIZE = 17; // N: Number of suares to pack
+constexpr int GENE_SIZE = 17; // N: Number of squares to pack
 constexpr number SQUARE_SIDE_LENGTH = 1.0; // Side length of small squares
-constexpr number BOX_SIDE_LENGTH = 4.8;   // L: Side length of the container
+constexpr number BOX_SIDE_LENGTH = 4.85;   // L: Side length of the container
 
 constexpr int POPULATION_SIZE = 150;
 constexpr double ELITISM_RATE = 0.1; // 10% of the best individuals are carried over
 constexpr double MUTATION_RATE = 0.05; // 5% chance per square to mutate
-constexpr double IMMIGRATION_RATE = 0.05; // 5% of new individuals are random
-constexpr int TOURNAMENT_SIZE = 5; 
+constexpr int TOURNAMENT_SIZE = 5;
 
 constexpr double ROTATIONAL_SNAP_PROBABILITY = 0.5; // Chance to rotate and move a square that's near an edge
-constexpr number BOUNDARY_THRESHOLD = 1.5 * SQUARE_SIDE_LENGTH; // How close to an edge to be affected
-constexpr double BOUNDARY_PENALTY_WEIGHT = 0.5; // How much to penalize non-alignment
+constexpr double PREDATION_RATE = 0.1; // Percentage of non-elites to be culled each generation
+constexpr double DISASTER_PROBABILITY = 0.02; // Probability of a disaster event in any given generation
+constexpr double DISASTER_HYPERMUTATION_RATE = 0.50; // The higher mutation rate used during a disaster
 
-// Percentage of non-elites to be culled each generation
-constexpr double PREDATION_RATE = 0.1; 
-// Probability of a disaster event in any given generation
-constexpr double DISASTER_PROBABILITY = 0.02; 
-// The higher mutation rate used during a disaster
-constexpr double DISASTER_HYPERMUTATION_RATE = 0.50; 
+constexpr double BOUNDARY_PENALTY_WEIGHT = 0.5; // How much to penalize non-alignment (DEPRECATED)
+constexpr double OUT_OF_BOUNDS_WEIGHT = 300; // How much to penalize for squares out of bounds
+constexpr double OVERLAP_WEIGHT = 5; // How much to penalize for squares overlapping
+
+const double M_PI = acos(-1);
+
+
 extern thread_local xso::rng gen;
-
 
 class Gene {
 public:
@@ -39,85 +57,35 @@ public:
         for (size_t i = 0; i < GENE_SIZE; ++i) {
             data[i] = Square(
                 Point(random_real(0, BOX_SIDE_LENGTH), random_real(0, BOX_SIDE_LENGTH)),
-                random_real(0, 2 * PI),
+                random_real(0, 2 * M_PI),
                 SQUARE_SIDE_LENGTH
             );
         }
     }
 
-void calculateFitness() {
-    double overlap_penalty = 0.0;
-    double bounds_penalty = 0.0;
-    double positional_adherence_penalty = 0.0;
-
-    const Square container_box(Point(BOX_SIDE_LENGTH / 2.0, BOX_SIDE_LENGTH / 2.0), 0, BOX_SIDE_LENGTH);
-    const Point box_center(BOX_SIDE_LENGTH / 2.0, BOX_SIDE_LENGTH / 2.0);
-
-    const double max_dist = sqrt(pow(box_center.x, 2) + pow(box_center.y, 2));
-
-    for (size_t i = 0; i < GENE_SIZE; ++i) {
-        for (size_t j = i + 1; j < GENE_SIZE; ++j) {
-            overlap_penalty += areaOfSquareIntersections(data[i], data[j]);
-        }
-        number intersection_with_box = areaOfSquareIntersections(data[i], container_box);
-        number square_area = data[i].l * data[i].l;
-        bounds_penalty += (square_area - intersection_with_box);
-    }
-    
-    for (size_t i = 0; i < GENE_SIZE; ++i) {
-        const auto& sq = data[i];
-
-        // 1. Calculate the square's distance from the center of the box
-        double dist_from_center = sqrt(pow(sq.c.x - box_center.x, 2) + pow(sq.c.y - box_center.y, 2));
-
-        // 2. Normalize the distance to a multiplier between 0 and 1
-        double positional_multiplier = dist_from_center / max_dist;
-
-        // 3. Calculate the rotation penalty and scale it by the multiplier
-        double rotation_penalty = abs(sin(2 * sq.t));
-        positional_adherence_penalty += rotation_penalty * positional_multiplier;
-    }
-
-    // Add the weighted new penalty to the total fitness
-    fitness = overlap_penalty * 10 + bounds_penalty + (positional_adherence_penalty * BOUNDARY_PENALTY_WEIGHT);
-}
-
-    void mutate() {
-    for (size_t i = 0; i < GENE_SIZE; ++i) {
-        if (random_real(0, 1) < MUTATION_RATE) {
-            int mutation_type = random_integer(0, 2);
-            switch(mutation_type) {
-                case 0: // Nudge position
-                    data[i].c.x += random_real(-0.1 * BOX_SIDE_LENGTH, 0.1 * BOX_SIDE_LENGTH);
-                    data[i].c.y += random_real(-0.1 * BOX_SIDE_LENGTH, 0.1 * BOX_SIDE_LENGTH);
-                    break;
-                case 1: // Jump to a new position
-                    data[i].c.x = random_real(0, BOX_SIDE_LENGTH);
-                    data[i].c.y = random_real(0, BOX_SIDE_LENGTH);
-                    break;
-                case 2: // Change rotation 
-                    if (random_real(0, 1) < ROTATIONAL_SNAP_PROBABILITY) {
-                        // Snap to the nearest 90-degree angle
-                        data[i].t = round(data[i].t / (PI / 2.0)) * (PI / 2.0);
-                    } else {
-                        // Regular random rotation
-                        data[i].t = random_real(0, 2 * PI);
-                    }
-                    break;
+    void calculateFitness() {
+        double overlap_penalty = 0.0;
+        double bounds_penalty = 0.0;
+        
+        const Square container_box(Point(BOX_SIDE_LENGTH / 2.0, BOX_SIDE_LENGTH / 2.0), 0, BOX_SIDE_LENGTH);
+        const Point box_center(BOX_SIDE_LENGTH / 2.0, BOX_SIDE_LENGTH / 2.0);
+        for (size_t i = 0; i < GENE_SIZE; ++i) {
+            // Overlap with other squares
+            for (size_t j = i + 1; j < GENE_SIZE; ++j) {
+                overlap_penalty += areaOfSquareIntersections(data[i], data[j]);
             }
-            // Clamp coordinates to stay within the box 
-            data[i].c.x = std::max((number)0.0, std::min(BOX_SIDE_LENGTH, data[i].c.x));
-            data[i].c.y = std::max((number)0.0, std::min(BOX_SIDE_LENGTH, data[i].c.y));
+            // Penalty for being outside the container
+            // This should be avoided by the mutate() functions, but this works as a last fallback
+            number intersection_with_box = areaOfSquareIntersections(data[i], container_box);
+            number square_area = data[i].l * data[i].l;
+            bounds_penalty += (square_area - intersection_with_box);
         }
+        fitness = (overlap_penalty * OVERLAP_WEIGHT) + bounds_penalty * OUT_OF_BOUNDS_WEIGHT;
     }
-}
 };
 
 // --- Genetic Algorithm Functions ---
 
-vector<Gene> population;
-
-// Crossover 
 Gene cross(const Gene& parent1, const Gene& parent2) {
     Gene child;
     for (size_t i = 0; i < GENE_SIZE; ++i) {
@@ -126,47 +94,24 @@ Gene cross(const Gene& parent1, const Gene& parent2) {
     return child;
 }
 
-// Tournament selection
-const Gene& tournament_selection() {
-    int best_index = -1;
-    double best_fitness = std::numeric_limits<double>::max();
-    
-    for (int i = 0; i < TOURNAMENT_SIZE; ++i) {
-        int random_index = random_integer(0, POPULATION_SIZE - 1);
-        if (population[random_index].fitness < best_fitness) {
-            best_fitness = population[random_index].fitness;
-            best_index = random_index;
-        }
-    }
-    return population[best_index];
-}
-
-// Some scenarios have obvious solutions (e.g: packing 4 squares in a 2x2 grid). When it is possible to just make a grid, we do!
+// Creates a gene with squares arranged in a grid.
+// This is the obvious, trivial solution for any grid with L^2 > NUMBER_SQUARES
 Gene createGridGene() {
     Gene gridGene;
-    // This can be modified to int grid_dim = floor(sqrt(GENE_SIZE)); if we always want to make the closest grid possible
-    // (This solution usually completely butchers any genetic variety)
     int grid_dim = ceil(sqrt(GENE_SIZE)); 
-    if(grid_dim * grid_dim > BOX_SIDE_LENGTH * BOX_SIDE_LENGTH){
-        return Gene();
+    if(grid_dim * SQUARE_SIDE_LENGTH > BOX_SIDE_LENGTH){
+        return Gene(); // Return a random gene if the grid doesn't fit
     }
     const number spacing = SQUARE_SIDE_LENGTH;
-
     number grid_total_size = grid_dim * spacing;
-
-    // Calculate the starting offset to center the grid within the box.
-    // If the grid is somehow larger than the box, we start at 0.
-    number start_offset = std::max((double)0.0, (BOX_SIDE_LENGTH - grid_total_size) / 2.0);
-    
+    number start_offset = max(0.0, (double)(BOX_SIDE_LENGTH - grid_total_size) / 2.0);
     number center_offset = spacing / 2.0;
 
     int square_index = 0;
     for (int i = 0; i < grid_dim && square_index < GENE_SIZE; ++i) {
         for (int j = 0; j < grid_dim && square_index < GENE_SIZE; ++j) {
-            
             number pos_x = start_offset + (j * spacing) + center_offset;
             number pos_y = start_offset + (i * spacing) + center_offset;
-
             gridGene.data[square_index].c = Point(pos_x, pos_y);
             gridGene.data[square_index].t = 0.0;
             square_index++;
@@ -175,11 +120,11 @@ Gene createGridGene() {
     return gridGene;
 }
 
-void initializeGenes() {
-    population.clear();
-
+vector<Gene> initializeGenes() {
+    vector<Gene> population;
+    population.reserve(POPULATION_SIZE);
     population.push_back(createGridGene());
-
+    
     for (int i = 1; i < POPULATION_SIZE; ++i) {
         population.push_back(Gene());
     }
@@ -189,96 +134,135 @@ void initializeGenes() {
     sort(population.begin(), population.end(), [](const Gene& a, const Gene& b) {
         return a.fitness < b.fitness;
     });
+
+    return population;
 }
 
+// Standalone mutation function to be called from threads. 
+void mutate_gene(Gene& gene, double rate) {
+    for (size_t j = 0; j < GENE_SIZE; ++j) {
+        if (random_real(0, 1) < rate) {
+            int mutation_type = random_integer(0, 2);
+            switch(mutation_type) {
+                case 0: // Nudge position
+                    gene.data[j].c.x += random_real(-0.1 * BOX_SIDE_LENGTH, 0.1 * BOX_SIDE_LENGTH);
+                    gene.data[j].c.y += random_real(-0.1 * BOX_SIDE_LENGTH, 0.1 * BOX_SIDE_LENGTH);
+                    break;
+                case 1: // Jump to a new position
+                    gene.data[j].c.x = random_real(0, BOX_SIDE_LENGTH);
+                    gene.data[j].c.y = random_real(0, BOX_SIDE_LENGTH);
+                    break;
+                case 2: // Change rotation
+                    if (random_real(0, 1) < ROTATIONAL_SNAP_PROBABILITY) {
+                        gene.data[j].t = round(gene.data[j].t / (M_PI / 2.0)) * (M_PI / 2.0);
+                    } else {
+                        gene.data[j].t = random_real(0, 2 * M_PI);
+                    }
+                    break;
+            }
+            // Clamp coordinates to stay within bounds
+            gene.data[j].c.x = max((number)0.0, min(BOX_SIDE_LENGTH, gene.data[j].c.x));
+            gene.data[j].c.y = max((number)0.0, min(BOX_SIDE_LENGTH, gene.data[j].c.y));
+        }
+    }
+}
 
-std::pair<Gene,double> evolve_once() {
-    double average = 0.0;
-    vector<Gene> survivors;
-    survivors.reserve(POPULATION_SIZE);
+// Tournament selection that operates on a provided parent pool.
+const Gene& tournament_selection(const vector<Gene>& parent_pool) {
+    if (parent_pool.empty()) {
+        //This should never happen, since it implies a predation rate of 100 and elitism of 0. 
+        throw std::runtime_error("Parent pool for tournament selection is empty!");
+    }
+    
+    int best_index = -1;
+    double best_fitness = std::numeric_limits<double>::max();
 
-    // Elitism
+    for (int i = 0; i < TOURNAMENT_SIZE; ++i) {
+        int random_index = random_integer(0, parent_pool.size() - 1);
+        if (parent_pool[random_index].fitness < best_fitness) {
+            best_fitness = parent_pool[random_index].fitness;
+            best_index = random_index;
+        }
+    }
+    return parent_pool[best_index];
+}
+
+vector<Gene> evolve_generation(const vector<Gene>& current_population, const unsigned int NUM_THREADS) {
+    //Elitism and predation
+    vector<Gene> survivor_pool;
+    survivor_pool.reserve(POPULATION_SIZE);
+
     int elite_count = static_cast<int>(POPULATION_SIZE * ELITISM_RATE);
     for (int i = 0; i < elite_count; ++i) {
-        survivors.push_back(population[i]);
+        survivor_pool.push_back(current_population[i]);
     }
 
-    // Random Predation
     vector<int> non_elite_indices;
-    for (int i = elite_count; i < POPULATION_SIZE; ++i) {
+    for (size_t i = elite_count; i < current_population.size(); ++i) {
         non_elite_indices.push_back(i);
     }
     shuffle(non_elite_indices.begin(), non_elite_indices.end(), gen);
 
     int predation_kill_count = static_cast<int>(non_elite_indices.size() * PREDATION_RATE);
     int non_elite_survivor_count = non_elite_indices.size() - predation_kill_count;
-    
     for (int i = 0; i < non_elite_survivor_count; ++i) {
-        survivors.push_back(population[non_elite_indices[i]]);
+        survivor_pool.push_back(current_population[non_elite_indices[i]]);
     }
 
-    // Disaster
+    // Mutation and crossover
     double current_mutation_rate = MUTATION_RATE;
     if (random_real(0, 1) < DISASTER_PROBABILITY) {
         current_mutation_rate = DISASTER_HYPERMUTATION_RATE;
     }
 
-    vector<Gene> new_population = survivors; 
-    int offspring_needed = POPULATION_SIZE - survivors.size();
+    vector<Gene> new_population = survivor_pool;
+    int offspring_needed = POPULATION_SIZE - survivor_pool.size();
+    
+    if (offspring_needed > 0) {
+        vector<std::thread> workers;
+        std::mutex new_population_mutex;
+        size_t chunk_size = offspring_needed / NUM_THREADS;
 
-    // Custom tournament selection that works on the survivors list
-    auto tournament_selection_on_survivors = [&]() -> const Gene& {
-        int best_index = -1;
-        double best_fitness = std::numeric_limits<double>::max();
-        for (int i = 0; i < TOURNAMENT_SIZE; ++i) {
-            int random_index = random_integer(0, survivors.size() - 1);
-            if (survivors[random_index].fitness < best_fitness) {
-                best_fitness = survivors[random_index].fitness;
-                best_index = random_index;
-            }
-        }
-        return survivors[best_index];
-    };
-
-    for (int i = 0; i < offspring_needed; ++i) {
-        const Gene& parent1 = tournament_selection_on_survivors();
-        const Gene& parent2 = tournament_selection_on_survivors();
-        Gene child = cross(parent1, parent2);
-        
-
-        auto mutate_child = [&](Gene& gene, double rate) {
-            for (size_t j = 0; j < GENE_SIZE; ++j) {
-                if (random_real(0, 1) < rate) {
-                    int mutation_type = random_integer(0, 2);
-                    if (mutation_type == 0) {
-                        gene.data[j].c.x += random_real(-0.1, 0.1);
-                        gene.data[j].c.y += random_real(-0.1, 0.1);
-                    } else if (mutation_type == 1) {
-                        gene.data[j].c.x = random_real(0, BOX_SIDE_LENGTH);
-                        gene.data[j].c.y = random_real(0, BOX_SIDE_LENGTH);
-                    } else {
-                        gene.data[j].t = random_real(0, 2 * PI);
-                    }
+        for (unsigned int i = 0; i < NUM_THREADS; ++i) {
+            size_t num_to_create = (i == NUM_THREADS - 1) ? (offspring_needed - (i * chunk_size)) : chunk_size;
+            
+            workers.emplace_back([&, num_to_create, current_mutation_rate]() {
+                vector<Gene> offspring_batch;
+                offspring_batch.reserve(num_to_create);
+                for (size_t j = 0; j < num_to_create; ++j) {
+                    const Gene& parent1 = tournament_selection(survivor_pool);
+                    const Gene& parent2 = tournament_selection(survivor_pool);
+                    Gene child = cross(parent1, parent2);
+                    mutate_gene(child, current_mutation_rate);
+                    offspring_batch.push_back(child);
                 }
-            }
-        };
-        mutate_child(child, current_mutation_rate);
-
-        new_population.push_back(child);
+                
+                std::lock_guard<std::mutex> guard(new_population_mutex);
+                new_population.insert(new_population.end(), offspring_batch.begin(), offspring_batch.end());
+            });
+        }
+        for (auto& worker : workers) { worker.join(); }
+    }
+    {
+        vector<std::thread> workers;
+        size_t chunk_size = new_population.size() / NUM_THREADS;
+        for (unsigned int i = 0; i < NUM_THREADS; ++i) {
+            size_t start = i * chunk_size;
+            size_t end = (i == NUM_THREADS - 1) ? new_population.size() : start + chunk_size;
+            workers.emplace_back([&new_population, start, end]() {
+                for (size_t j = start; j < end; ++j) {
+                    new_population[j].calculateFitness();
+                }
+            });
+        }
+        for (auto& worker : workers) { worker.join(); }
     }
     
-    population = new_population;
-
-    // Return the best individual in the current population
-    // The first one is not necessarily the best after breeding, so we re-calculate.
-    // This also leaves the list sorted for future populations
-    for (auto& gene : population) {
-        gene.calculateFitness();
-        average+= gene.fitness;
-    }
-    sort(population.begin(), population.end(), [](const Gene& a, const Gene& b) {
+    sort(new_population.begin(), new_population.end(), [](const Gene& a, const Gene& b) {
         return a.fitness < b.fitness;
     });
-    average /= population.size();
-    return std::make_pair(population[0],average);
+
+    return new_population;
 }
+
+#endif // EVOLUTION_H

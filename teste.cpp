@@ -1,141 +1,100 @@
-#include "./include/random/xoshiro.h" // Your custom xoshiro header
-
 #include <iostream>
+#include <sstream>
 #include <vector>
-#include <numeric>
-#include <iomanip>
-#include <cmath>
-#include <algorithm>
-#include <string>
+#include "include\tools\Square.h"
 
-inline thread_local xso::rng gen;
+using namespace std;
 
-// --- Method 1: The fast, arithmetic-based approach ---
-inline double random_double_01() {
-    return (gen() >> 11) * 0x1.0p-53;
-}
-inline double random_real(double lower, double upper) {
-    return lower + random_double_01() * (upper - lower);
-}
-inline int random_integer(int lower, int upper) {
-    uint64_t range = (uint64_t)upper - lower + 1;
-    return lower + (int)(gen() % range);
-}
+std::vector<Square> parseSquares(const std::string& inputStr) {
+    std::vector<Square> squares;
+    std::stringstream ss(inputStr); // Treat the entire input string as a stream
+    std::string line;
 
-// --- Method 2: The standard library's approach (our baseline for quality) ---
-inline double random_real_stdlib(double lower, double upper) {
-    std::uniform_real_distribution<double> dis(lower, upper);
-    return dis(gen);
-}
-inline int random_integer_stdlib(int lower, int upper) {
-    std::uniform_int_distribution<int> dis(lower, upper);
-    return dis(gen);
-}
+    // Process the stream line by line
+    while (std::getline(ss, line)) {
+        // Use another stringstream to parse each individual line
+        std::stringstream line_ss(line);
 
-/**
- * @brief Analyzes the distribution of random integers from a given generator function.
- */
-void analyze_int_distribution(
-    const std::string& title,
-    int (*generator)(int, int),
-    long long samples,
-    int min_val,
-    int max_val)
-{
-    std::cout << "--- Analyzing Distribution for: " << title << " ---\n";
+        double x, y, t;
+        char open_paren, comma1, comma2, close_paren;
 
-    const int num_buckets = max_val - min_val + 1;
-    std::vector<long long> counts(num_buckets, 0);
+        // Try to extract data in the expected format: (x,y,t)
+        // The ">>" operator will automatically skip whitespace.
+        // If the format doesn't match, the extraction will fail, and the 'if' condition will be false.
+        if (line_ss >> open_paren && open_paren == '(' &&
+            line_ss >> x &&
+            line_ss >> comma1 && comma1 == ',' &&
+            line_ss >> y &&
+            line_ss >> comma2 && comma2 == ',' &&
+            line_ss >> t &&
+            line_ss >> close_paren && close_paren == ')') {
 
-    for (long long i = 0; i < samples; ++i) {
-        int value = generator(min_val, max_val);
-        counts[value - min_val]++;
+            // If successful, create a Square object and add it to the vector
+            squares.emplace_back(Point(x,y), t, 1);
+        }
     }
 
-    const double expected_count = static_cast<double>(samples) / num_buckets;
-    double chi_squared_stat = 0.0;
-    long long min_actual_count = samples;
-    long long max_actual_count = 0;
-
-    for (long long count : counts) {
-        double diff = static_cast<double>(count) - expected_count;
-        chi_squared_stat += diff * diff / expected_count;
-        min_actual_count = std::min(min_actual_count, count);
-        max_actual_count = std::max(max_actual_count, count);
-    }
-
-    std::cout << std::fixed << std::setprecision(2);
-    std::cout << "Total Samples: " << samples << " | Range: [" << min_val << ", " << max_val << "]\n";
-    std::cout << "Expected count per number: " << expected_count << "\n";
-    std::cout << "Actual counts ranged from " << min_actual_count << " to " << max_actual_count << ".\n";
-    std::cout << "Chi-Squared Statistic: " << chi_squared_stat << " (lower is better; ~" << num_buckets - 1 << ".0 is ideal)\n\n";
+    return squares;
 }
 
-/**
- * @brief Analyzes the distribution of random real numbers from a given generator function.
- */
-void analyze_real_distribution(
-    const std::string& title,
-    double (*generator)(double, double),
-    long long samples,
-    double min_val,
-    double max_val,
-    int num_buckets)
-{
-    std::cout << "--- Analyzing Distribution for: " << title << " ---\n";
-    
-    std::vector<long long> counts(num_buckets, 0);
-    const double bucket_width = (max_val - min_val) / num_buckets;
-
-    for (long long i = 0; i < samples; ++i) {
-        double value = generator(min_val, max_val);
-        int bucket_index = static_cast<int>((value - min_val) / bucket_width);
-        // Clamp the index to handle the edge case where value == max_val
-        bucket_index = std::min(bucket_index, num_buckets - 1);
-        counts[bucket_index]++;
+void printSquares(vector<Square>& sqr){
+    for(const Square& sq : sqr){
+        printf("(%f %f %f)\n",sq.c.x,sq.c.y,sq.t);
     }
+    printf("\n\n");
+}
 
-    const double expected_count = static_cast<double>(samples) / num_buckets;
-    double chi_squared_stat = 0.0;
-    long long min_actual_count = samples;
-    long long max_actual_count = 0;
+double calculateFitness(vector<Square>& data){
+    const size_t GENE_SIZE = data.size();
+    const double BOX_SIDE_LENGTH = 4.85;
+    double overlap_penalty = 0.0;
+    double bounds_penalty = 0.0;
+    double positional_adherence_penalty = 0.0;
 
-    for (long long count : counts) {
-        double diff = static_cast<double>(count) - expected_count;
-        chi_squared_stat += diff * diff / expected_count;
-        min_actual_count = std::min(min_actual_count, count);
-        max_actual_count = std::max(max_actual_count, count);
+    const Point box_center(BOX_SIDE_LENGTH / 2.0, BOX_SIDE_LENGTH / 2.0);
+    const Square container_box(box_center, 0, BOX_SIDE_LENGTH);
+
+    for (size_t i = 0; i < GENE_SIZE; ++i) {
+        for (size_t j = i + 1; j < GENE_SIZE; ++j) {
+            overlap_penalty += areaOfSquareIntersections(data[i], data[j]);
+        }
+        // Penalty for being outside the container
+        number intersection_with_box = areaOfSquareIntersections(data[i], container_box);
+        number square_area = data[i].l * data[i].l;
+        bounds_penalty += (square_area - intersection_with_box);
     }
-
-    std::cout << std::fixed << std::setprecision(2);
-    std::cout << "Total Samples: " << samples << " | Range: [" << min_val << ", " << max_val << ") | Buckets: " << num_buckets << "\n";
-    std::cout << "Expected count per bucket: " << expected_count << "\n";
-    std::cout << "Actual counts ranged from " << min_actual_count << " to " << max_actual_count << ".\n";
-    std::cout << "Chi-Squared Statistic: " << chi_squared_stat << " (lower is better; ~" << num_buckets - 1 << ".0 is ideal)\n\n";
+    return (overlap_penalty * 5) + bounds_penalty * 300;
 }
 
 
-int main() {
-    constexpr long long SAMPLES = 1'000'000;
-    
-    // --- Integer Analysis ---
-    constexpr int INT_MIN_VAL = 0;
-    constexpr int INT_MAX_VAL = 99;
-    std::cout << "====== Running Distribution Analysis for INTEGER Generators ======\n\n";
-    analyze_int_distribution("Arithmetic Method (Modulo)", random_integer, SAMPLES, INT_MIN_VAL, INT_MAX_VAL);
-    analyze_int_distribution("std::uniform_int_distribution", random_integer_stdlib, SAMPLES, INT_MIN_VAL, INT_MAX_VAL);
+int main(){
+    vector<Square> sqs = parseSquares(R"(
+(1.580747,3.353917,0.875791)
+(4.325975,0.949594,0.000000)
+(0.611020,1.109277,6.051540)
+(0.729663,4.148878,0.822272)
+(4.219793,2.042378,1.388005)
+(2.263891,4.105357,2.419573)
+(1.623305,1.806468,5.496466)
+(0.520240,3.337980,4.712389)
+(4.135303,3.784060,4.432355)
+(1.513235,0.624713,2.958930)
+(2.952622,3.767261,6.283185)
+(0.538379,2.335698,1.570796)
+(1.653581,2.492916,4.712389)
+(2.554513,1.305122,3.141593)
+(2.836719,2.918109,2.301713)
+(3.313730,2.384610,1.570796)
+(3.028640,1.007975,2.257814))");
+    printSquares(sqs);
+    const size_t n = sqs.size();
+    double intersection_amount = 0.0;
+    for(int i=0;i<n;i++){
+        for(int j=i+1;j<n;j++){
+            intersection_amount += areaOfSquareIntersections(sqs[i],sqs[j]);
+        }
+    }
+    cout << intersection_amount;
+    cout << "\n Fitness: " << calculateFitness(sqs);
 
-    // --- Real Number Analysis ---
-    constexpr double REAL_MIN_VAL = 0.0;
-    constexpr double REAL_MAX_VAL = 100.0;
-    constexpr int REAL_BUCKETS = 100;
-    std::cout << "\n====== Running Distribution Analysis for REAL Generators ======\n\n";
-    analyze_real_distribution("Arithmetic Method (Scaling)", random_real, SAMPLES, REAL_MIN_VAL, REAL_MAX_VAL, REAL_BUCKETS);
-    analyze_real_distribution("std::uniform_real_distribution", random_real_stdlib, SAMPLES, REAL_MIN_VAL, REAL_MAX_VAL, REAL_BUCKETS);
-
-    return 0;
 }
-
-
-
-// ------------------- ARQUIVO CRIADO COM IA GENERATIVA PARA TESTE -------------------
