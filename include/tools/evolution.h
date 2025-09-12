@@ -3,6 +3,7 @@
 #include <tools/customRand.h>
 #include <tools/MathArray.h>
 #include <tools/Square.h>
+#include <utility>
 
 typedef float number;
 // --- GA Configuration ---
@@ -191,7 +192,8 @@ void initializeGenes() {
 }
 
 
-Gene evolve_once() {
+std::pair<Gene,double> evolve_once() {
+    double average = 0.0;
     vector<Gene> survivors;
     survivors.reserve(POPULATION_SIZE);
 
@@ -272,10 +274,11 @@ Gene evolve_once() {
     // This also leaves the list sorted for future populations
     for (auto& gene : population) {
         gene.calculateFitness();
+        average+= gene.fitness;
     }
     sort(population.begin(), population.end(), [](const Gene& a, const Gene& b) {
-            return a.fitness < b.fitness;
+        return a.fitness < b.fitness;
     });
-
-    return population[0];
+    average /= population.size();
+    return std::make_pair(population[0],average);
 }

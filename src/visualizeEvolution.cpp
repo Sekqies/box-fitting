@@ -5,6 +5,7 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <graphics/Shader.h>
 #include <tools/evolution.h>
+#include <tools/EvolutionData.h>
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -22,13 +23,22 @@ MathArray<Square,GENE_SIZE> shared_squares;
 std::mutex data_mutex; 
 std::atomic<bool> is_running = true; 
 std::atomic<bool> is_rendering_enabled = true;
+std::atomic<size_t> generation_number = 0;
+
+EvolutionData evolutionData;
+
 
 void evolution_worker() {
     initializeGenes();
     while (is_running) {
-        Gene best_squares = evolve_once();
+        std::pair<Gene,double> data = evolve_once();
+        Gene best_squares = data.first;
+        double average_score = data.second;
+        evolutionData.pushGeneration(data,generation_number);
+
         std::lock_guard<std::mutex> guard(data_mutex);
         shared_squares = best_squares.data;
+        generation_number++;
     }
 }
 
