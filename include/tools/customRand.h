@@ -1,17 +1,24 @@
-#include <random>
 #ifndef CUSTOMRAND_H
 #define CUSTOMRAND_H
-std::mt19937 gen(std::random_device{}());
 
-double random_real(double lower, double upper) {
-    static std::uniform_real_distribution<> dis;
-    dis.param(std::uniform_real_distribution<>::param_type(lower, upper));
-    return dis(gen);
+#include <random>
+#include <thread>
+#include <random/xoshiro.h>
+
+inline thread_local xso::rng gen;
+
+inline double random_double_01() {
+    return (gen() >> 11) * 0x1.0p-53;
 }
 
-int random_integer(int lower, int upper){
-    static std::uniform_int_distribution<> dis;
-    dis.param(std::uniform_int_distribution<>::param_type(lower, upper));
-    return dis(gen);
+
+inline double random_real(double lower, double upper) {
+    return lower + random_double_01() * (upper - lower);
 }
-#endif
+
+inline int random_integer(int lower, int upper) {
+    uint64_t range = (uint64_t)upper - lower + 1;
+    return lower + (int)(gen() % range);
+}
+
+#endif // CUSTOMRAND_H

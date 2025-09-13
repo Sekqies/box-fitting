@@ -161,11 +161,27 @@ bool squareContainedIn(const Square& inner, const Square& outer) {
     }
     return true;
 }
-number areaOfSquareIntersections(const Square& sq1, const Square& sq2){
-    if(sq1.l > sq2.l){
-        if(squareContainedIn(sq2,sq1)) return sq2.l*sq2.l;
+number areaOfSquareIntersections(const Square& sq1, const Square& sq2) {
+    if (squareContainedIn(sq2, sq1)) return sq2.l * sq2.l;
+    if (squareContainedIn(sq1, sq2)) return sq1.l * sq1.l;
+
+    vector<Point> vertices = getSquareIntersections(sq1, sq2);
+    if (vertices.size() < 3) {
+        return 0.0; 
     }
-    else if(squareContainedIn(sq1,sq2)) return sq1.l*sq1.l;
-    vector<Point> vertices = getSquareIntersections(sq1,sq2);
+
+    Point centroid = {0, 0};
+    for (const auto& v : vertices) {
+        centroid.x += v.x;
+        centroid.y += v.y;
+    }
+    centroid.x /= vertices.size();
+    centroid.y /= vertices.size();
+
+    sort(vertices.begin(), vertices.end(), [&](const Point& a, const Point& b) {
+        return atan2(a.y - centroid.y, a.x - centroid.x) <
+               atan2(b.y - centroid.y, b.x - centroid.x);
+    });
+
     return areaOfPolygon(vertices);
 }
