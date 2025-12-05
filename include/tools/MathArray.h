@@ -5,6 +5,8 @@
 
 using namespace std;
 
+
+
 template <typename T, size_t N> class MathArray;
 
 template<typename> struct is_math_array : std::false_type {};
@@ -16,6 +18,7 @@ template <typename T, size_t N>
 class MathArray {
 private:
     array<T, N> ar;
+
 
 public:
     MathArray() = default;

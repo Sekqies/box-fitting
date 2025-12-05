@@ -164,6 +164,6 @@ int main() {
     worker.join();
     glfwTerminate();
     evolutionData.write("evolution_data.dat");
-    system("gnuplot plotscript.gp");
+    system("gnuplot -persist plotscript.gp");
     return 0;
 }

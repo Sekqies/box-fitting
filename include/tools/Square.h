@@ -51,9 +51,9 @@ public:
 
 class Square {
 public:
-    Point c;
-    number t;
-    number l = 1.0;
+    Point c; // centro (x,y)
+    number t; // inclinação (teta)
+    number l = 1.0; // l (lado do quadrado)
     Square(Point c,number t,number l){
         this->c = c;
         this->t = t;
@@ -61,7 +61,7 @@ public:
     }
     Square() = default;
 
-    vector<Point> getVertices() const {
+    vector<Point> getVertices() const { 
         number half_l = l / 2.0;
         vector<Point> corners = {
             Point(-half_l, -half_l),
@@ -143,7 +143,7 @@ vector<Point> getSquareIntersections(const Square& sq1, const Square& sq2) {
     return intersectionPoints;
 }
 
-number areaOfPolygon(vector<Point>& pts){
+number areaOfPolygon(vector<Point>& pts){ // Fórmula do cadarço
     number sum = 0.0;
     const size_t n = pts.size();
     for(size_t i=0;i<n;i++){

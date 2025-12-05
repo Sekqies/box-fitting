@@ -5,19 +5,6 @@
             "label": "Build OpenGL Project",
             "type": "shell",
             "command": "g++",
-            "args": [
-                "-g", 
-                "${workspaceFolder}/src/*.cpp",
-                "${workspaceFolder}/src/*.c",
-                "-o",
-                "${workspaceFolder}/build/main.exe", 
-                "-I${workspaceFolder}/include", 
-                "-L${workspaceFolder}/lib",     
-                "-lglfw3",                    
-                "-lopengl32",                  
-                "-lgdi32",
-                "-std=c++20"                       
-            ],
             "group": {
                 "kind": "build",
                 "isDefault": true
@@ -30,9 +17,45 @@
                 "showReuseMessage": true,
                 "clear": false
             },
-            "problemMatcher": [
-                "$gcc"
-            ]
+            "problemMatcher": ["$gcc"],
+
+            // --- CONFIGURAÇÃO PARA WINDOWS (MinGW) ---
+            "windows": {
+                "args": [
+                    "-g",
+                    "${workspaceFolder}/src/*.cpp",
+                    "${workspaceFolder}/src/*.c",  // Garante que o glad.c seja compilado
+                    "-o", "${workspaceFolder}/build/main.exe",
+                    "-I${workspaceFolder}/include",
+                    "-L${workspaceFolder}/lib",
+                    "-std=c++20",
+                    
+                    // Libs do Windows
+                    "-lglfw3",
+                    "-lopengl32",
+                    "-lgdi32"
+                ]
+            },
+
+            // --- CONFIGURAÇÃO PARA LINUX / WSL ---
+            "linux": {
+                "args": [
+                    "-g",
+                    "${workspaceFolder}/src/*.cpp",
+                    "${workspaceFolder}/src/*.c",  // Garante que o glad.c seja compilado
+                    "-o", "${workspaceFolder}/build/main", // Sem .exe
+                    "-I${workspaceFolder}/include",
+                    "-std=c++20",
+
+                    // Libs do Linux (note a diferença aqui)
+                    "-lglfw", 
+                    "-lGL",
+                    "-lm",
+                    "-lpthread",
+                    "-ldl",
+                    "-lX11"
+                ]
+            }
         }
     ]
 }

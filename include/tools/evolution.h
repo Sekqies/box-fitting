@@ -27,14 +27,14 @@ typedef float number;
 // --- GA Configuration ---
 constexpr int GENE_SIZE = 17; // N: Number of squares to pack
 constexpr number SQUARE_SIDE_LENGTH = 1.0; // Side length of small squares
-constexpr number BOX_SIDE_LENGTH = 4.85;   // L: Side length of the container
+constexpr number BOX_SIDE_LENGTH = 5;   // L: Side length of the container
 
 constexpr int POPULATION_SIZE = 150;
 constexpr double ELITISM_RATE = 0.1; // 10% of the best individuals are carried over
 constexpr double MUTATION_RATE = 0.05; // 5% chance per square to mutate
 constexpr int TOURNAMENT_SIZE = 5;
 
-constexpr double ROTATIONAL_SNAP_PROBABILITY = 0.5; // Chance to rotate and move a square that's near an edge
+constexpr double ROTATIONAL_SNAP_PROBABILITY = 0.5; // Chance to rotate and move a square that's near an edge 
 constexpr double PREDATION_RATE = 0.1; // Percentage of non-elites to be culled each generation
 constexpr double DISASTER_PROBABILITY = 0.02; // Probability of a disaster event in any given generation
 constexpr double DISASTER_HYPERMUTATION_RATE = 0.50; // The higher mutation rate used during a disaster
@@ -43,12 +43,11 @@ constexpr double BOUNDARY_PENALTY_WEIGHT = 0.5; // How much to penalize non-alig
 constexpr double OUT_OF_BOUNDS_WEIGHT = 300; // How much to penalize for squares out of bounds
 constexpr double OVERLAP_WEIGHT = 5; // How much to penalize for squares overlapping
 
-const double M_PI = acos(-1);
 
 
 extern thread_local xso::rng gen;
 
-class Gene {
+class Gene { // Gene is a set of squares
 public:
     MathArray<Square, GENE_SIZE> data;
     double fitness;
@@ -139,6 +138,7 @@ vector<Gene> initializeGenes() {
 }
 
 // Standalone mutation function to be called from threads. 
+
 void mutate_gene(Gene& gene, double rate) {
     for (size_t j = 0; j < GENE_SIZE; ++j) {
         if (random_real(0, 1) < rate) {
@@ -203,8 +203,10 @@ vector<Gene> evolve_generation(const vector<Gene>& current_population, const uns
     }
     shuffle(non_elite_indices.begin(), non_elite_indices.end(), gen);
 
-    int predation_kill_count = static_cast<int>(non_elite_indices.size() * PREDATION_RATE);
-    int non_elite_survivor_count = non_elite_indices.size() - predation_kill_count;
+    int predation_kill_count = static_cast<int>(non_elite_indices.size() * PREDATION_RATE); 
+    int non_elite_survivor_count = non_elite_indices.size() - predation_kill_count; 
+    // Random number of non-elites get eliminated
+
     for (int i = 0; i < non_elite_survivor_count; ++i) {
         survivor_pool.push_back(current_population[non_elite_indices[i]]);
     }
